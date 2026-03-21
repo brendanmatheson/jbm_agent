@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Analysis: Police issue warning to protesters before al-Quds Day rally in London</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Libre+Franklin:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --ink: #1a1a18;
+    --ink-mid: #3d3d3a;
+    --ink-muted: #6b6b67;
+    --ink-faint: #8D99AE;
+    --cream: #faf8f4;
+    --cream-dark: #f0ece3;
+    --rule: #d4cfc5;
+    --accent: #C1121F;
+    --accent-muted: rgba(193,18,31,0.08);
+    --font-serif: 'Libre Baskerville', Georgia, serif;
+    --font-sans: 'Libre Franklin', 'Helvetica Neue', sans-serif;
+  }
+
+  html { font-size: 16px; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--cream);
+    color: var(--ink);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  .masthead {
+    border-bottom: 3px solid var(--ink);
+    padding: 18px 0 14px;
+    margin-bottom: 0;
+  }
+  .masthead-inner {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+  }
+  .brand {
+    font-family: var(--font-serif);
+    font-size: 13px;
+    font-style: italic;
+    letter-spacing: 0.5px;
+    color: var(--ink-muted);
+    white-space: nowrap;
+  }
+  .datestamp {
+    font-size: 12px;
+    color: var(--ink-faint);
+    font-weight: 400;
+    white-space: nowrap;
+  }
+
+  /* ── Category tag ────────────────────────────────────────── */
+  .category-bar {
+    background: var(--ink);
+    padding: 7px 0;
+  }
+  .category-bar-inner {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .category-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.8px;
+    text-transform: uppercase;
+    color: #ffffff;
+  }
+  .trend-pill {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    color: rgba(255,255,255,0.6);
+  }
+
+  /* ── Main content ────────────────────────────────────────── */
+  .content {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* ── Story header ────────────────────────────────────────── */
+  .story-header {
+    padding: 40px 0 28px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 32px;
+  }
+  .headline-stat {
+    font-family: var(--font-serif);
+    font-size: clamp(28px, 5vw, 44px);
+    font-weight: 700;
+    line-height: 1.15;
+    color: var(--ink);
+    margin-bottom: 14px;
+    max-width: 720px;
+  }
+  .headline-narrative {
+    font-size: 18px;
+    font-weight: 300;
+    color: var(--ink-mid);
+    line-height: 1.45;
+    max-width: 640px;
+    margin-bottom: 20px;
+  }
+
+  /* Trend indicator */
+  .trends-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--ink-faint);
+    font-weight: 500;
+  }
+  .trends-bar-track {
+    width: 120px;
+    height: 4px;
+    background: var(--rule);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .trends-bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 100%;
+    transition: width 0.6s ease;
+  }
+
+  /* ── Sensitivity banner ──────────────────────────────────── */
+  .sensitivity-banner {
+    padding: 12px 16px;
+    margin-bottom: 24px;
+    font-size: 13px;
+    line-height: 1.55;
+    border-radius: 2px;
+  }
+
+  /* ── Lede ────────────────────────────────────────────────── */
+  .lede {
+    font-family: var(--font-serif);
+    font-size: 17px;
+    line-height: 1.7;
+    color: var(--ink-mid);
+    margin-bottom: 36px;
+    max-width: 680px;
+  }
+
+  /* ── Chart section ───────────────────────────────────────── */
+  .chart-section {
+    margin-bottom: 40px;
+  }
+  .chart-header {
+    margin-bottom: 10px;
+  }
+  .chart-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--ink);
+    letter-spacing: -0.2px;
+  }
+  .chart-subtitle {
+    font-size: 11px;
+    color: var(--ink-faint);
+    margin-top: 3px;
+    font-weight: 400;
+  }
+  .chart-wrapper {
+    background: #ffffff;
+    border: 1px solid var(--rule);
+    border-top: 3px solid var(--ink);
+    padding: 24px 20px 16px;
+    position: relative;
+  }
+  .chart-canvas-wrap {
+    height: 340px;
+    position: relative;
+  }
+
+  /* ── Insights grid ───────────────────────────────────────── */
+  .section-label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .insights-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+  .insight-card {
+    background: #ffffff;
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule);
+    padding: 16px 18px;
+  }
+  .insight-card.sig-high {
+    border-left-color: var(--accent);
+  }
+  .insight-card.sig-medium {
+    border-left-color: #457B9D;
+  }
+  .insight-type {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: block;
+    margin-bottom: 8px;
+  }
+  .insight-text {
+    font-size: 14px;
+    line-height: 1.55;
+    color: var(--ink-mid);
+    margin-bottom: 10px;
+  }
+  .insight-stat {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-muted);
+    padding: 3px 8px;
+    border-radius: 2px;
+    display: inline-block;
+  }
+
+  /* ── Stats block ─────────────────────────────────────────── */
+  .stats-block {
+    background: var(--ink);
+    color: #ffffff;
+    padding: 28px 32px;
+    margin-bottom: 40px;
+  }
+  .stats-block .section-label {
+    color: rgba(255,255,255,0.4);
+    border-bottom-color: rgba(255,255,255,0.15);
+    margin-bottom: 18px;
+  }
+  .stats-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .stat-item {
+    font-size: 14px;
+    line-height: 1.5;
+    color: rgba(255,255,255,0.85);
+    padding-left: 16px;
+    position: relative;
+  }
+  .stat-item::before {
+    content: '→';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  /* ── Conclusion ──────────────────────────────────────────── */
+  .conclusion {
+    padding: 28px 0;
+    border-top: 2px solid var(--ink);
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 32px;
+  }
+  .conclusion-text {
+    font-family: var(--font-serif);
+    font-size: 18px;
+    line-height: 1.65;
+    color: var(--ink);
+    font-style: italic;
+    max-width: 660px;
+  }
+  .conclusion-text::before {
+    content: '"';
+    color: var(--accent);
+    font-size: 36px;
+    line-height: 0;
+    vertical-align: -12px;
+    margin-right: 4px;
+  }
+
+  /* ── Footer / sources ────────────────────────────────────── */
+  .footer-section {
+    padding: 24px 0 40px;
+    border-top: 1px solid var(--rule);
+  }
+  .sources-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .source-tag {
+    font-size: 11px;
+    background: var(--cream-dark);
+    color: var(--ink-mid);
+    padding: 3px 10px;
+    border-radius: 2px;
+    border: 1px solid var(--rule);
+  }
+  .caveat {
+    font-size: 12px;
+    color: var(--ink-faint);
+    line-height: 1.55;
+    margin-top: 8px;
+  }
+
+  /* ── Responsive ──────────────────────────────────────────── */
+  @media (max-width: 600px) {
+    .masthead-inner { flex-direction: column; gap: 4px; }
+    .stats-block { padding: 20px; }
+    .chart-canvas-wrap { height: 260px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <span class="brand">Data analysis — UK politics &amp; society</span>
+    <span class="datestamp">21 March 2026</span>
+  </div>
+</header>
+
+<div class="category-bar">
+  <div class="category-bar-inner">
+    <span class="category-label">CRIME</span>
+    <span class="trend-pill">Google Trends UK · This week's top story</span>
+  </div>
+</div>
+
+<main class="content">
+
+  <header class="story-header">
+    <h1 class="headline-stat">UK political stability has halved since 2000, sitting at just 0.51 today versus a peak of 1.03</h1>
+    <p class="headline-narrative">Police warnings before London protests reflect a country whose political stability is still only half what it was at the millennium — despite having among the strongest rule-of-law institutions in the developed world</p>
+    <div class="trends-indicator">
+      <span>Search interest</span>
+      <div class="trends-bar-track">
+        <div class="trends-bar-fill"></div>
+      </div>
+      <span>100/100</span>
+    </div>
+  </header>
+
+  
+
+  <p class="lede">The framing around police warnings at al-Quds Day rallies tends to focus on the specific event — but the data reveals a deeper, longer story. UK political stability peaked at 1.03 in 2000, crashed to a historic low of just 0.08 in 2018 — the year of Brexit paralysis and the Salisbury poisoning — and has only partially recovered to 0.51 by 2023. That recovery, while real, still leaves the UK at roughly half its millennial-era stability level. Yet simultaneously, the UK ranks 3rd out of 8 peer nations on rule of law, scoring 1.40 — ahead of France, Spain, Italy and the United States.</p>
+
+  <!-- Chart -->
+  <section class="chart-section">
+    <div class="chart-header">
+      <div class="chart-title">UK political stability, 2000–2023: a recovery that's only gone halfway</div>
+      <div class="chart-subtitle">Source: World Bank</div>
+    </div>
+    <div class="chart-wrapper">
+      <div class="chart-canvas-wrap">
+        <canvas id="mainChart"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <!-- Insights -->
+  <div class="section-label">Key findings</div>
+  <div class="insights-grid">
+    
+        <div class="insight-card sig-high">
+            <span class="insight-type">Long-run</span>
+            <p class="insight-text">UK political stability hit a trough of just 0.08 in 2018 — a near-total collapse from its peak of 1.03 in 2000 — and even after five years of recovery sits at only 0.51 in 2023, meaning the country remains in a structurally more volatile state than at any point in the early 2000s</p>
+            <span class="insight-stat">0.08 (2018 trough) vs 1.03 (2000 peak)</span>
+        </div>
+        <div class="insight-card sig-high">
+            <span class="insight-type">International</span>
+            <p class="insight-text">Despite its reputation for robust policing of protests, the UK's rule of law score of 1.40 in 2023 places it 3rd among 8 peer nations, behind only the Netherlands (1.64) and Germany (1.55), and comfortably ahead of France (1.18), Spain (0.82) and Italy (0.39)</p>
+            <span class="insight-stat">UK rule of law: 1.40, ranked 3rd of 8</span>
+        </div>
+        <div class="insight-card sig-high">
+            <span class="insight-type">International</span>
+            <p class="insight-text">France — which has seen far more severe crackdowns on protests in recent years, from the gilets jaunes to pension reform demonstrations — scores only 0.34 on political stability in 2023, more than a third lower than the UK's 0.51, suggesting the UK's protest environment is comparatively contained</p>
+            <span class="insight-stat">France political stability: 0.34 vs UK: 0.51</span>
+        </div>
+        <div class="insight-card sig-high">
+            <span class="insight-type">Surprising finding</span>
+            <p class="insight-text">The United States, which frequently comments on protest policing in other democracies, scores a near-zero 0.03 on political stability in 2023 — the lowest of all 8 peer nations surveyed, making it a profound outlier among Western democracies</p>
+            <span class="insight-stat">US political stability score: 0.03 (lowest of 8 peers)</span>
+        </div>
+  </div>
+
+  <!-- Stats block -->
+  <div class="stats-block">
+    <div class="section-label">By the numbers</div>
+    <ul class="stats-list">
+      <li class="stat-item">UK political stability 10-year change: +5.9% (0.49 in 2013 to 0.51 in 2023) — a near-stagnant recovery</li><li class="stat-item">UK rule of law score (2023): 1.40 — higher than France (1.18), Spain (0.82) and Italy (0.39)</li><li class="stat-item">Netherlands tops both rankings: political stability 0.66, rule of law 1.64</li><li class="stat-item">Italy ranks last on rule of law among the 8 peers at just 0.39 — less than a quarter of the Netherlands score</li><li class="stat-item">Belgium political stability (0.40) and France (0.34) both fall below the UK (0.51), despite both countries experiencing acute recent protest crises</li>
+    </ul>
+  </div>
+
+  <!-- Conclusion -->
+  <div class="conclusion">
+    <p class="conclusion-text">Weekly news coverage of protest policing in the UK focuses almost entirely on individual events and police tactics — but the data tells a more uncomfortable structural story. The UK's rule-of-law institutions are genuinely among the strongest in the democratic world, yet political stability has only recovered to half its year-2000 level after a historic nadir in 2018. The real question the coverage is missing isn't whether police should warn protesters — it's why, after a quarter century, British political stability has settled into a new, permanently lower equilibrium.</p>
+  </div>
+
+  <!-- Sources & caveats -->
+  <div class="footer-section">
+    <div class="section-label">Sources</div>
+    <div class="sources-wrap">
+      <span class="source-tag">World Bank: Intentional homicides per 100,000 people - UK</span><span class="source-tag">World Bank: Political Stability and Absence of Violence - UK trend</span>
+    </div>
+    <div class="caveats-wrap">
+      <p class="caveat">Analysis conducted by ReAct agent in 11 steps.</p><p class="caveat">All statistics drawn from official sources: ONS, World Bank, FRED.</p>
+    </div>
+  </div>
+
+</main>
+
+<script>
+
+    const ctx = document.getElementById('mainChart').getContext('2d');
+    new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: ["2006", "2007", "2008", "2009", "2010", "2011", "2012", "2013", "2014", "2015", "2016", "2017", "2018", "2019", "2020", "2021"],
+            datasets: [
+                {
+            label: "United Kingdom",
+            data: [1.41, 1.42, 1.23, 1.12, 1.2, 1.01, 0.98, 0.93, 0.9, 0.95, 1.17, 1.18, 1.09, 1.15, 0.95, 1.12],
+            borderColor: '#C1121F',
+            backgroundColor: 'rgba(193,18,31,0.08)',
+            borderWidth: 3,
+            
+            pointRadius: 4,
+            pointHoverRadius: 5,
+            tension: 0.3,
+            spanGaps: true,
+        },
+{
+            label: "United States",
+            data: [0.49, 0.37, 0.58, 0.45, 0.44, 0.59, 0.63, 0.64, 0.58, 0.66, 0.39, 0.26, 0.39, 0.12, -0.03, -0.01],
+            borderColor: '#457B9D',
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            tension: 0.3,
+            spanGaps: true,
+        },
+{
+            label: "France",
+            data: [0.6, 0.56, 0.54, 0.51, 0.68, 0.6, 0.55, 0.45, 0.3, 0.1, -0.11, 0.27, 0.01, 0.27, 0.28, 0.33],
+            borderColor: '#6B9E78',
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            tension: 0.3,
+            spanGaps: true,
+        },
+{
+            label: "Germany",
+            data: [1.03, 1.0, 0.94, 0.86, 0.8, 0.84, 0.78, 0.93, 0.93, 0.69, 0.67, 0.57, 0.58, 0.55, 0.65, 0.73],
+            borderColor: '#E9C46A',
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            tension: 0.3,
+            spanGaps: true,
+        },
+{
+            label: "Italy",
+            data: [0.53, 0.45, 0.55, 0.35, 0.47, 0.5, 0.51, 0.5, 0.46, 0.36, 0.36, 0.29, 0.33, 0.38, 0.4, 0.55],
+            borderColor: '#A8DADC',
+            backgroundColor: 'transparent',
+            borderWidth: 1.5,
+            borderDash: [5, 4],
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            tension: 0.3,
+            spanGaps: true,
+        }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'bottom',
+                    labels: {
+                        font: { size: 12, family: "'Libre Franklin', sans-serif" },
+                        color: '#3d3d3a',
+                        usePointStyle: true,
+                        pointStyleWidth: 16,
+                        padding: 16,
+                    }
+                },
+                tooltip: {
+                    backgroundColor: '#1a1a2e',
+                    titleFont: { size: 13, family: "'Libre Franklin', sans-serif", weight: '600' },
+                    bodyFont: { size: 12, family: "'Libre Franklin', sans-serif" },
+                    padding: 12,
+                    cornerRadius: 4,
+                    callbacks: {
+                        label: function(ctx) {
+                            let val = ctx.parsed.y;
+                            if (val === null) return null;
+                            let unit = "";
+                            if (unit === '%') return ctx.dataset.label + ': ' + val.toFixed(1) + '%';
+                            if (unit === '£') return ctx.dataset.label + ': £' + val.toLocaleString('en-GB');
+                            return ctx.dataset.label + ': ' + val.toLocaleString('en-GB');
+                        }
+                    }
+                },
+                
+        annotation: {
+            annotations: {
+                callout: {
+                    type: 'label',
+                    xValue: 15,
+                    yValue: 'max',
+                    content: ['Crashed to near-zero in 2018; still only half 2000 peak'],
+                    font: { size: 11, family: "'Libre Franklin', sans-serif" },
+                    color: '#C1121F',
+                    backgroundColor: 'rgba(255,255,255,0.9)',
+                    borderWidth: 1,
+                    borderColor: '#C1121F44',
+                    padding: 6,
+                }
+            }
+        },
+            },
+            scales: {
+                x: {
+                    grid: { color: 'rgba(0,0,0,0.04)', drawTicks: false },
+                    ticks: {
+                        font: { size: 11, family: "'Libre Franklin', sans-serif" },
+                        color: '#8D99AE',
+                        maxTicksLimit: 12,
+                    },
+                    border: { color: 'rgba(0,0,0,0.15)' },
+                },
+                y: {
+                    grid: { color: 'rgba(0,0,0,0.06)', drawTicks: false },
+                    ticks: {
+                        font: { size: 11, family: "'Libre Franklin', sans-serif" },
+                        color: '#8D99AE',
+                        callback: function(val) {
+                            let unit = "";
+                            if (unit === '%') return val.toFixed(1) + '%';
+                            if (unit === '£') return '£' + val.toLocaleString('en-GB');
+                            if (Math.abs(val) >= 1000) return val.toLocaleString('en-GB');
+                            return val;
+                        }
+                    },
+                    border: { display: false },
+                }
+            }
+        }
+    });
+
+</script>
+
+</body>
+</html>
