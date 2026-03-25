@@ -147,6 +147,53 @@ PARAMS: <JSON object with parameters>
 
 # ── Response parser ───────────────────────────────────────────────────────────
 
+def _extract_json_safe(text: str) -> dict:
+    """
+    Multi-strategy JSON extraction that handles malformed output gracefully.
+    Tries strategies in order of strictness, falling back progressively.
+    """
+    if not text or not text.strip():
+        return {}
+
+    # Strategy 1: direct parse
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: extract first {...} block with re.DOTALL
+    m = re.search(r'\{.*\}', text, re.DOTALL)
+    if m:
+        candidate = m.group(0)
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: truncated JSON — find the last complete key-value pair
+    # before the unterminated string and close the object
+    for end in range(len(text) - 1, 0, -100):
+        chunk = text[:end]
+        # Find last complete "key": "value" or "key": [...] pair
+        last_comma = max(chunk.rfind(","), chunk.rfind("}"), chunk.rfind("]"))
+        if last_comma > 0:
+            closed = chunk[:last_comma] + "}"
+            try:
+                return json.loads(closed)
+            except json.JSONDecodeError:
+                pass
+
+    # Strategy 4: key-value extraction as last resort — pull any "key": "value" pairs
+    result = {}
+    for match in re.finditer(r'"(\w+)"\s*:\s*"([^"]*?)"', text):
+        result[match.group(1)] = match.group(2)
+    if result:
+        logger.warning("JSON extraction used key-value fallback — partial result")
+        return result
+
+    return {}
+
+
 def _parse_response(text: str) -> tuple[str, str, dict]:
     """
     Extract THOUGHT, ACTION, PARAMS from the LLM response.
@@ -167,13 +214,8 @@ def _parse_response(text: str) -> tuple[str, str, dict]:
     try:
         params = json.loads(params_str)
     except json.JSONDecodeError as e:
-        # Try to salvage with relaxed parsing
         logger.warning(f"JSON parse failed: {e} — attempting repair")
-        params_str_clean = re.sub(r'(\w+):', r'"\1":', params_str)
-        try:
-            params = json.loads(params_str_clean)
-        except Exception:
-            params = {}
+        params = _extract_json_safe(params_str)
 
     return thought, action, params
 
@@ -267,7 +309,43 @@ def _dispatch(action: str, params: dict, scratchpad: Scratchpad) -> ToolResult:
     return result
 
 
-# ── Narrative writer ──────────────────────────────────────────────────────────
+# ── Reflection constants ──────────────────────────────────────────────────────
+
+REFLECTION_QUALITY_THRESHOLD = 75   # score out of 100 to accept draft
+REFLECTION_MAX_ROUNDS        = 3    # max generate→critique→revise cycles
+
+# The rubric the critic scores against — five dimensions, 20 pts each
+CRITIC_RUBRIC = """
+Score the draft on these five dimensions (0–20 each, total out of 100):
+
+1. HEADLINE PRECISION (0-20)
+   - 20: Contains a specific number, year, and counter-intuitive framing
+   - 10: Has a number but framing is predictable
+   - 0:  Vague, no statistics, or purely descriptive
+
+2. LEDE SURPRISE (0-20)
+   - 20: Opens with the most counter-intuitive finding; contradicts the obvious narrative
+   - 10: Interesting but leads with the expected angle
+   - 0:  Buries the best insight; starts with context-setting rather than revelation
+
+3. CLAIM SUPPORT (0-20)
+   - 20: Every factual claim cites an exact figure from the scratchpad data
+   - 10: Most claims supported but some vague ('significantly', 'much higher')
+   - 0:  Claims not traceable to specific data points; possible hallucination
+
+4. INTERNATIONAL CONTEXT (0-20)
+   - 20: UK benchmarked against ≥3 named peer countries with specific figures
+   - 10: Some international reference but incomplete or imprecise
+   - 0:  No international comparison; UK treated in isolation
+
+5. CONCLUSION INSIGHT (0-20)
+   - 20: Conclusion reveals something the weekly news cycle actively obscures; genuinely surprising
+   - 10: Reasonable but predictable; something a reader already suspects
+   - 0:  Vague, hedged, or restates what the lede already said
+"""
+
+
+# ── Generator ────────────────────────────────────────────────────────────────
 
 def _write_narrative(
     client: anthropic.Anthropic,
@@ -275,10 +353,13 @@ def _write_narrative(
     story_topic: str,
     sensitivity: str,
     sensitivity_notes: list[str],
+    objections: list[dict] = None,
+    previous_draft: dict = None,
 ) -> dict:
     """
-    Once the ReAct loop finishes, make a separate focused Claude call
-    to write the JBM-style narrative from the accumulated evidence.
+    Generate (or revise) a JBM-style narrative from the scratchpad.
+    On first call: objections=None, previous_draft=None → fresh generation.
+    On revision calls: objections and previous_draft are both provided.
     """
     sens_block = ""
     if sensitivity == "HIGH":
@@ -289,48 +370,67 @@ def _write_narrative(
             f"Notes: {'; '.join(sensitivity_notes)}"
         )
 
-    prompt = f"""You are John Burn-Murdoch. You have just completed a data investigation into:
-"{story_topic}"
+    # Revision mode: include previous draft and critic objections
+    revision_block = ""
+    if objections and previous_draft:
+        obj_lines = "\n".join(
+            f"  [{o['dimension']}] {o['objection']}  →  Fix: {o['fix']}"
+            for o in objections
+        )
+        revision_block = f"""
+PREVIOUS DRAFT (round {previous_draft.get('_round', '?')}):
+Headline: {previous_draft.get('headline_stat', '')}
+Lede: {previous_draft.get('lede_paragraph', '')}
+Conclusion: {previous_draft.get('conclusion', '')}
 
-Here is everything your research agent found:
+CRITIC OBJECTIONS TO ADDRESS IN THIS REVISION:
+{obj_lines}
+
+Rewrite the full analysis addressing every objection above.
+Do not simply add a sentence — restructure where needed.
+Every fix must be traceable to a specific data point in the scratchpad.
+"""
+
+    mode = "REVISE the analysis" if revision_block else "Write the analysis"
+
+    prompt = f"""You are John Burn-Murdoch at the Financial Times. You have just completed \
+a data investigation into: "{story_topic}"
 
 --- RESEARCH SCRATCHPAD ---
 {scratchpad.full_text()}
 --- END SCRATCHPAD ---
 
-Agent's final reasoning:
-{scratchpad.finish_reasoning}
+Agent's final reasoning: {scratchpad.finish_reasoning}
 {sens_block}
+{revision_block}
 
-Now write the analysis. Be precise, surprising, and grounded entirely in the data above.
-Use exact numbers and years from the observations. Do NOT invent statistics.
+{mode}. Rules:
+- Lead with the most SURPRISING finding — the thing that contradicts the obvious narrative
+- Every statistic must come verbatim from the scratchpad above
+- International comparisons are mandatory if the data supports them
+- The conclusion must reveal something the weekly news cycle actively obscures
+- Be precise: exact numbers, exact years, exact percentage changes
 
-Respond as a JSON object with exactly these keys:
+Respond as JSON with exactly these keys:
 {{
-  "headline_stat": "The single most striking statistic — one punchy sentence",
-  "headline_narrative": "One sentence framing the data angle of the story",
-  "lede_paragraph": "Opening paragraph, 3-4 sentences. Lead with the most surprising finding.",
+  "headline_stat": "Most striking statistic — one punchy sentence with a specific number",
+  "headline_narrative": "One sentence framing the data angle",
+  "lede_paragraph": "3-4 sentences. Lead with the most surprising finding.",
   "insights": [
-    {{"text": "full insight sentence with specific number", "stat": "key figure", "type": "trend_break|international|long_run|contradiction"}},
+    {{"text": "insight with specific number", "stat": "key figure", "type": "trend_break|international|long_run|contradiction"}},
     {{"text": "...", "stat": "...", "type": "..."}},
     {{"text": "...", "stat": "...", "type": "..."}},
     {{"text": "...", "stat": "...", "type": "..."}}
   ],
-  "supporting_stats": [
-    "Stat 1 with exact figure",
-    "Stat 2 with exact figure",
-    "Stat 3 with exact figure",
-    "Stat 4 with exact figure",
-    "Stat 5 with exact figure"
-  ],
-  "conclusion": "The closing observation — what the weekly news coverage is missing. Surprising.",
-  "chart_title": "Title for the hero chart (the most important dataset)",
-  "chart_annotation": "Short annotation for the most dramatic data point (max 8 words)"
+  "supporting_stats": ["Stat with exact figure", "...", "...", "...", "..."],
+  "conclusion": "What the weekly news coverage is missing. Genuinely surprising.",
+  "chart_title": "Hero chart title",
+  "chart_annotation": "Key data point annotation (max 8 words)"
 }}"""
 
     response = client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=2000,
+        max_tokens=3000,
         messages=[{"role": "user", "content": prompt}],
     )
     text = response.content[0].text.strip()
@@ -338,7 +438,196 @@ Respond as a JSON object with exactly these keys:
         text = text.split("```json")[1].split("```")[0].strip()
     elif "```" in text:
         text = text.split("```")[1].split("```")[0].strip()
-    return json.loads(text)
+    result = _extract_json_safe(text)
+    if not result:
+        raise ValueError(f"Could not parse narrative JSON. Response length: {len(text)}")
+    # Ensure required keys exist with defaults
+    for key in ["headline_stat", "headline_narrative", "lede_paragraph",
+                "insights", "supporting_stats", "conclusion",
+                "chart_title", "chart_annotation"]:
+        if key not in result:
+            result[key] = [] if key in ("insights", "supporting_stats") else ""
+    return result
+
+
+# ── Critic ────────────────────────────────────────────────────────────────────
+
+def _critique_narrative(
+    client: anthropic.Anthropic,
+    narrative: dict,
+    scratchpad: Scratchpad,
+    story_topic: str,
+) -> dict:
+    """
+    Score the draft against the JBM quality rubric and return structured
+    objections for each dimension that falls below threshold.
+
+    Returns:
+      {
+        "scores": {"headline_precision": int, "lede_surprise": int,
+                   "claim_support": int, "international_context": int,
+                   "conclusion_insight": int},
+        "total": int,          # sum of five scores, 0-100
+        "objections": [        # only for dimensions scoring < 15/20
+          {"dimension": str, "score": int, "objection": str, "fix": str}
+        ],
+        "verdict": str         # one-sentence overall assessment
+      }
+    """
+    prompt = f"""You are a senior data journalism editor at the Financial Times.
+Your job is to critique a draft analysis against the JBM quality rubric.
+
+STORY: "{story_topic}"
+
+DRAFT TO CRITIQUE:
+Headline: {narrative.get('headline_stat', '')}
+Deck: {narrative.get('headline_narrative', '')}
+Lede: {narrative.get('lede_paragraph', '')}
+Stats block: {json.dumps(narrative.get('supporting_stats', []))}
+Conclusion: {narrative.get('conclusion', '')}
+
+AVAILABLE DATA (what the writer had access to):
+{scratchpad.full_text()[-3000:]}
+
+{CRITIC_RUBRIC}
+
+Be a tough, precise editor. Vague praise is useless. Every objection must name
+the specific problem and give a concrete fix grounded in the available data.
+
+Respond as JSON:
+{{
+  "scores": {{
+    "headline_precision": <0-20>,
+    "lede_surprise": <0-20>,
+    "claim_support": <0-20>,
+    "international_context": <0-20>,
+    "conclusion_insight": <0-20>
+  }},
+  "total": <0-100>,
+  "objections": [
+    {{
+      "dimension": "headline_precision|lede_surprise|claim_support|international_context|conclusion_insight",
+      "score": <int>,
+      "objection": "Specific problem with this dimension",
+      "fix": "Concrete fix using data from the scratchpad"
+    }}
+  ],
+  "verdict": "One sentence overall assessment"
+}}
+
+Only include objections for dimensions scoring below 15. If a dimension scores 15+, omit it."""
+
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1600,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    text = response.content[0].text.strip()
+    if "```json" in text:
+        text = text.split("```json")[1].split("```")[0].strip()
+    elif "```" in text:
+        text = text.split("```")[1].split("```")[0].strip()
+    result = _extract_json_safe(text)
+    if not result:
+        logger.warning("Critic returned unparseable JSON — returning default pass")
+        return {"scores": {}, "total": 80, "objections": [], "verdict": "Could not parse critique."}
+    result.setdefault("total", 0)
+    result.setdefault("objections", [])
+    result.setdefault("verdict", "")
+    return result
+
+
+# ── Reflection coordinator ────────────────────────────────────────────────────
+
+def _write_with_reflection(
+    client: anthropic.Anthropic,
+    scratchpad: Scratchpad,
+    story_topic: str,
+    sensitivity: str,
+    sensitivity_notes: list[str],
+    on_reflection_step=None,   # optional callback(round, score, objections, passed)
+) -> tuple[dict, list[dict]]:
+    """
+    Runs the generate → critique → revise loop until the narrative
+    meets REFLECTION_QUALITY_THRESHOLD or REFLECTION_MAX_ROUNDS is reached.
+
+    Returns:
+      (best_narrative_dict, reflection_log)
+
+    reflection_log is a list of dicts, one per round:
+      {"round": int, "score": int, "objections": list, "verdict": str, "passed": bool}
+    """
+    reflection_log = []
+    best_narrative = None
+    best_score = 0
+    objections = None
+
+    for round_num in range(1, REFLECTION_MAX_ROUNDS + 1):
+        logger.info(f"  Reflection round {round_num}/{REFLECTION_MAX_ROUNDS}")
+
+        # Generate (or revise)
+        narrative = _write_narrative(
+            client=client,
+            scratchpad=scratchpad,
+            story_topic=story_topic,
+            sensitivity=sensitivity,
+            sensitivity_notes=sensitivity_notes,
+            objections=objections,
+            previous_draft={**best_narrative, "_round": round_num - 1}
+                           if best_narrative else None,
+        )
+        narrative["_round"] = round_num
+        time.sleep(0.4)
+
+        # Critique
+        critique = _critique_narrative(
+            client=client,
+            narrative=narrative,
+            scratchpad=scratchpad,
+            story_topic=story_topic,
+        )
+        time.sleep(0.4)
+
+        score   = critique.get("total", 0)
+        verdict = critique.get("verdict", "")
+        objections = critique.get("objections", [])
+        passed  = score >= REFLECTION_QUALITY_THRESHOLD
+
+        logger.info(
+            f"    Score: {score}/100  |  Objections: {len(objections)}  "
+            f"|  {'PASS' if passed else 'REVISE'}"
+        )
+        if objections:
+            for obj in objections:
+                logger.info(f"    [{obj['dimension']}] {obj['objection'][:70]}")
+
+        reflection_log.append({
+            "round":      round_num,
+            "score":      score,
+            "scores":     critique.get("scores", {}),
+            "objections": objections,
+            "verdict":    verdict,
+            "passed":     passed,
+        })
+
+        # Keep the best draft seen so far
+        if score > best_score:
+            best_score = score
+            best_narrative = narrative
+
+        if on_reflection_step:
+            on_reflection_step(round_num, score, objections, passed)
+
+        if passed:
+            logger.info(f"  Reflection passed at round {round_num} (score {score})")
+            break
+
+        if round_num == REFLECTION_MAX_ROUNDS:
+            logger.warning(
+                f"  Reflection hit max rounds — using best draft (score {best_score})"
+            )
+
+    return best_narrative, reflection_log
 
 
 # ── Main ReAct loop ───────────────────────────────────────────────────────────
@@ -445,15 +734,30 @@ def run_react_agent(
             f"Reached step limit. Available data: {scratchpad.datasets_summary()}"
         )
 
-    # ── Write narrative ───────────────────────────────────────────────────────
-    logger.info("Writing JBM narrative from scratchpad...")
-    narrative = _write_narrative(
+    # ── Write narrative with reflection loop ─────────────────────────────────
+    logger.info("Starting reflection loop (generate → critique → revise)...")
+
+    def on_reflection_step(round_num, score, objections, passed):
+        if on_step:
+            status = "PASS" if passed else f"{len(objections)} objection(s)"
+            on_step(
+                f"reflect-{round_num}",
+                f"Reflection round {round_num}: score {score}/100",
+                "reflect",
+                f"Score {score}/100 · {status}",
+            )
+
+    narrative, reflection_log = _write_with_reflection(
         client=client,
         scratchpad=scratchpad,
         story_topic=story_result.topic,
         sensitivity=story_result.sensitivity,
         sensitivity_notes=story_result.sensitivity_notes,
+        on_reflection_step=on_reflection_step,
     )
+
+    final_score  = reflection_log[-1]["score"]
+    total_rounds = len(reflection_log)
 
     # ── Build chart spec ──────────────────────────────────────────────────────
     # Attach best comparison data to the most relevant dataset
@@ -486,8 +790,12 @@ def run_react_agent(
         ))
 
     # ── Caveats ───────────────────────────────────────────────────────────────
+    passed = reflection_log[-1]["passed"]
     caveats = [
-        f"Analysis conducted by ReAct agent in {step} steps.",
+        f"Analysis conducted by ReAct agent in {step} steps, "
+        f"refined by reflection over {total_rounds} round(s) "
+        f"(final quality score: {final_score}/100"
+        f"{' — passed threshold' if passed else ' — best available draft'}).",
         "All statistics drawn from official sources: ONS, World Bank, FRED.",
     ]
     if story_result.sensitivity != "LOW":

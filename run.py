@@ -73,17 +73,20 @@ def run(topic_override=None, output_path=None, verbose=False):
     step_log = []
 
     def on_step(step_num, thought, action, observation):
-        # Truncate for display
-        thought_short = thought[:70] + "..." if len(thought) > 70 else thought
-        obs_short = observation[:70] + "..." if len(observation) > 70 else observation
-        print(f"         step {step_num:02d}  {action:<22}  {obs_short}")
+        obs_short = observation[:68] + "..." if len(observation) > 68 else observation
+        if str(step_num).startswith("reflect"):
+            # Reflection rounds get distinct visual treatment
+            print(f"         {str(step_num):<12}  {obs_short}")
+        else:
+            print(f"         step {step_num:02d}       {action:<18}  {obs_short}")
         step_log.append((step_num, thought, action, observation))
 
     try:
         analysis = run_react_agent(story, on_step=on_step)
-        n_steps = len(step_log)
+        react_steps = len([s for s in step_log if not str(s[0]).startswith("reflect")])
+        reflect_steps = len([s for s in step_log if str(s[0]).startswith("reflect")])
         n_datasets = len(analysis.sources_used)
-        print(f"\r  [2/3]  Agent complete: {n_steps} steps, {n_datasets} sources")
+        print(f"\r  [2/3]  Agent complete: {react_steps} ReAct steps · {reflect_steps} reflection round(s) · {n_datasets} sources")
     except ValueError as e:
         print(f"\n  ✗  {e}\n")
         return None

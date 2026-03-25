@@ -66,6 +66,18 @@ POLITICAL_KEYWORDS = set(
 ) | {"government", "whitehall", "downing street", "westminster", "uk", "britain",
      "chancellor", "secretary of state", "legislation", "bill", "act"}
 
+# Topics matching any of these patterns are NEVER treated as political —
+# sport, entertainment, and lifestyle trends must not slip through.
+NON_POLITICAL_BLOCKLIST = [
+    "championship", "premier league", "fa cup", "league table", "transfer",
+    "footballer", "cricket", "rugby", "tennis", "golf", "formula 1", "grand prix",
+    "wimbledon", "euros", "world cup", "olympic", "athletics", "boxing", "ufc",
+    "relegation", "promotion", "fixture", "match result",
+    "celebrity", "reality tv", "x factor", "strictly", "bake off", "love island",
+    "oscar", "bafta", "grammy", "brit award", "album", "actor", "actress", "singer",
+    "recipe", "restaurant", "fashion week", "royal wedding", "lottery",
+]
+
 
 @dataclass
 class StoryResult:
@@ -173,48 +185,97 @@ def _trending_now_uk() -> list[tuple[str, int]]:
     return []
 
 
-# ── Method 2: Guardian API ───────────────────────────────────────────────────
+# ── Method 2: NewsAPI ───────────────────────────────────────────────────────
 
-def _guardian_top_stories(api_key: str = "test") -> list[str]:
+def _newsapi_top_stories(api_key: str) -> list[str]:
     """
-    Fetch top UK political/news headlines from The Guardian API.
-    'test' key is freely available — register at open-platform.theguardian.com
-    for higher rate limits.
+    Fetch top UK political headlines from NewsAPI.org.
+
+    Sources used (all high-quality UK/international):
+      bbc-news, reuters, the-times, the-telegraph, independent,
+      the-independent, sky-news, politico
+
+    Register a free key at https://newsapi.org (takes ~2 minutes).
+    Free tier: current headlines only, 100 requests/day — plenty for this agent.
+    Set NEWSAPI_KEY in your .env file.
+
     Returns list of headline strings, most prominent first.
     """
-    today = datetime.now().strftime("%Y-%m-%d")
-    week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    if not api_key:
+        logger.warning("No NEWSAPI_KEY set — skipping NewsAPI. Register free at newsapi.org")
+        return []
     try:
         resp = requests.get(
-            "https://content.guardianapis.com/search",
+            "https://newsapi.org/v2/top-headlines",
             params={
-                "api-key":     api_key,
-                "section":     "politics|uk-news|business",
-                "order-by":    "relevance",
-                "page-size":   20,
-                "show-fields": "headline",
-                "from-date":   week_ago,
-                "to-date":     today,
+                "apiKey":   api_key,
+                "sources":  "bbc-news,reuters,the-times,the-telegraph,independent,sky-news",
+                "pageSize": 30,
+                "language": "en",
             },
             timeout=12,
         )
+        if resp.status_code == 401:
+            logger.warning("NewsAPI key invalid or missing — check NEWSAPI_KEY in .env")
+            return []
         if resp.status_code == 429:
-            logger.warning("Guardian API rate limited — register a free key at open-platform.theguardian.com")
+            logger.warning("NewsAPI rate limited (100 req/day on free tier)")
             return []
         if resp.status_code != 200:
-            logger.warning(f"Guardian API {resp.status_code}")
+            logger.warning(f"NewsAPI {resp.status_code}: {resp.text[:120]}")
             return []
-        results = resp.json().get("response", {}).get("results", [])
+
+        articles = resp.json().get("articles", [])
         headlines = []
-        for r in results:
-            h = r.get("fields", {}).get("headline") or r.get("webTitle", "")
-            h = h.split(" | ")[0].strip()
-            if h:
+        for a in articles:
+            # Prefer the description as it\'s more informative than the title
+            h = a.get("description") or a.get("title") or ""
+            # Strip source suffix e.g. " - BBC News"
+            h = h.split(" - ")[0].strip()
+            if h and len(h) > 20:
                 headlines.append(h)
-        logger.info(f"Guardian API: {len(headlines)} headlines")
+
+        logger.info(f"NewsAPI: {len(headlines)} headlines from {len(set(a.get('source',{}).get('name','') for a in articles))} sources")
         return headlines
+
     except Exception as e:
-        logger.warning(f"Guardian API error: {e}")
+        logger.warning(f"NewsAPI error: {e}")
+        return []
+
+
+def _newsapi_search(api_key: str, query: str) -> list[str]:
+    """
+    Search NewsAPI for articles matching a specific query.
+    Useful when Google Trends returns a topic and we want news context for it.
+    Free tier supports /everything endpoint with date range.
+    """
+    if not api_key:
+        return []
+    try:
+        from datetime import datetime, timedelta
+        week_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%S")
+        resp = requests.get(
+            "https://newsapi.org/v2/everything",
+            params={
+                "apiKey":    api_key,
+                "q":         query,
+                "from":      week_ago,
+                "language":  "en",
+                "sortBy":    "relevancy",
+                "pageSize":  10,
+                "sources":   "bbc-news,reuters,the-times,the-telegraph,independent,sky-news",
+            },
+            timeout=12,
+        )
+        if resp.status_code != 200:
+            return []
+        articles = resp.json().get("articles", [])
+        return [
+            (a.get("description") or a.get("title") or "").split(" - ")[0].strip()
+            for a in articles
+            if (a.get("description") or a.get("title") or "").strip()
+        ]
+    except Exception:
         return []
 
 
@@ -275,8 +336,20 @@ def _pytrends_spike_check(topics: list[str]) -> dict[str, int]:
 # ── Classifier helpers ───────────────────────────────────────────────────────
 
 def _score_political_relevance(topic: str) -> float:
+    """
+    Returns 0.0-1.0. A topic must score > 0.5 to be treated as political.
+    Topics on the blocklist always return 0.0 regardless of keyword matches.
+    """
     tl = topic.lower()
-    return min(1.0, sum(1 for kw in POLITICAL_KEYWORDS if kw in tl) / 2.0)
+    # Hard blocklist check first — sport/entertainment/lifestyle topics return 0
+    if any(blocked in tl for blocked in NON_POLITICAL_BLOCKLIST):
+        return 0.0
+    matches = sum(1 for kw in POLITICAL_KEYWORDS if kw in tl)
+    # Require at least 2 keyword matches to score positively — prevents single
+    # generic words like "uk" or "act" from making non-political topics pass
+    if matches < 2:
+        return 0.0
+    return min(1.0, matches / 3.0)
 
 
 def _classify_category(topic: str, related: list[str]) -> str:
@@ -338,14 +411,14 @@ def _get_news_context(topic: str) -> str:
 
 def detect_top_story(
     manual_override: Optional[str] = None,
-    guardian_api_key: Optional[str] = None,
+    newsapi_key: Optional[str] = None,
 ) -> StoryResult:
     """
     Detect the top UK political story of the week.
-    Uses a four-method cascade: Trends → Guardian → pytrends themes → fallback.
+    Uses a four-method cascade: Trends → NewsAPI → pytrends themes → fallback.
     """
     import os
-    g_key = guardian_api_key or os.environ.get("GUARDIAN_API_KEY", "test")
+    g_key = newsapi_key or os.environ.get("NEWSAPI_KEY", "")
 
     # Manual override
     if manual_override:
@@ -367,7 +440,7 @@ def detect_top_story(
     logger.info("Detection method 1: Google Trends live trending...")
     trending = _trending_now_uk()
     if trending:
-        political = [(t, v) for t, v in trending if _score_political_relevance(t) > 0]
+        political = [(t, v) for t, v in trending if _score_political_relevance(t) >= 0.5]
         if political:
             top, top_vol = political[0]
             related = [t for t, _ in political[1:6]]
@@ -384,13 +457,13 @@ def detect_top_story(
             )
         logger.info(f"  Trends: {len(trending)} topics, none clearly political")
 
-    # Method 2: Guardian API + pytrends spike confirmation
-    logger.info("Detection method 2: Guardian API...")
-    guardian_headlines = _guardian_top_stories(g_key)
+    # Method 2: NewsAPI headlines + pytrends spike confirmation
+    logger.info("Detection method 2: NewsAPI...")
+    guardian_headlines = _newsapi_top_stories(g_key)
     if guardian_headlines:
         political_hlines = [h for h in guardian_headlines
-                            if _score_political_relevance(h) > 0] or guardian_headlines[:5]
-        logger.info(f"  Guardian: {political_hlines[:2]}")
+                            if _score_political_relevance(h) >= 0.5] or guardian_headlines[:5]
+        logger.info(f"  NewsAPI: {political_hlines[:2]}")
 
         # Spike check on first 5 headlines
         spike_scores = _pytrends_spike_check(political_hlines[:5])
@@ -412,7 +485,7 @@ def detect_top_story(
             category=cat, headline_context=_get_news_context(best),
             sensitivity=sens, sensitivity_notes=notes,
             raw_trends_data={"guardian_headlines": political_hlines[:5]},
-            detection_method="guardian_api",
+            detection_method="newsapi",
         )
 
     # Method 3: pytrends on real current story themes
